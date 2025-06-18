@@ -4,25 +4,55 @@ import pandas as pd
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
-
-# Load data
+# Load dataset
 games_df = pd.read_csv("data/games.csv")
 
 # Load model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Prepare game embeddings (once)
-game_texts = (games_df['title'] + " " + games_df['tags'] + " " + games_df['description']).fillna("").tolist()
-game_embeddings = model.encode(game_texts, convert_to_tensor=True).cpu()
+# Embedding cache file
+EMBEDDINGS_FILE = "data/embeddings.pkl"
+
+# Load or compute game embeddings
+if os.path.exists(EMBEDDINGS_FILE):
+    with open(EMBEDDINGS_FILE, "rb") as f:
+        game_embeddings = pickle.load(f)
+else:
+    print("Generating game embeddings for the first time...")
+    game_texts = (games_df["title"] + " " + games_df["tags"] + " " + games_df["description"]).fillna("").tolist()
+    game_embeddings = model.encode(game_texts, convert_to_tensor=True).cpu()
+    with open(EMBEDDINGS_FILE, "wb") as f:
+        pickle.dump(game_embeddings, f)
+    print(f"Saved embeddings to {EMBEDDINGS_FILE}")
 
 
-def get_semantic_matches(user_input):
+# Match user input to games
+def get_semantic_matches(user_input, genre_filter=None, platform_filter=None, liked_titles=None, custom_df=None):
+    df = custom_df.copy() if custom_df is not None else games_df.copy()
     user_embedding = model.encode([user_input], convert_to_tensor=True).cpu()
     scores = cosine_similarity(user_embedding, game_embeddings.cpu())[0]
 
-    games_df["score"] = scores
-    top_matches = games_df.sort_values(by="score", ascending=False).head(10)
-    top_matches = top_matches.drop_duplicates(subset="title")
+    df["score"] = scores
+
+    # Boost genre
+    if genre_filter:
+        df.loc[df["genre"].str.contains(genre_filter, case=False, na=False), "score"] += 0.1
+
+    # Boost platform
+    if platform_filter:
+        df.loc[df["platforms"].str.contains(platform_filter, case=False, na=False), "score"] += 0.1
+
+    # Boost based on liked games
+    if liked_titles:
+        liked_df = df[df["title"].isin(liked_titles)]
+        if not liked_df.empty:
+            liked_texts = (liked_df['title'] + " " + liked_df['tags'] + " " + liked_df['description']).fillna("").tolist()
+            liked_embeddings = model.encode(liked_texts, convert_to_tensor=True).cpu()
+            sim_boosts = cosine_similarity(liked_embeddings, game_embeddings.cpu())
+            similarity_scores = sim_boosts.mean(axis=0)
+            df["score"] += similarity_scores * 0.2
+
+    top_matches = df.sort_values(by="score", ascending=False).drop_duplicates(subset="title").head(10)
 
     results = []
     for _, match in top_matches.iterrows():
@@ -30,13 +60,25 @@ def get_semantic_matches(user_input):
         platforms = match["platforms"]
         genre = match["genre"]
         description = match["description"]
+        released = match["released"] or "Unknown"
+        release_year = released.split("-")[0] if released != "Unknown" else "Unknown"
+        metacritic = match["metacritic"] if pd.notna(match["metacritic"]) else "N/A"
+
+        tag_list = [t.strip() for t in match["tags"].split(",") if len(t.strip()) < 25 and " " in t]
+        tags_preview = ", ".join(tag_list[:3])
+
         short_desc = description[:240].strip().replace('\n', ' ') + "..."
 
-        results.append(
-            f"\n *{title}* [{platforms}]\n"
-            f"Genre: {genre}\n"
-            f"{short_desc}\n"
-        )
+        results.append({
+            "title": title,
+            "platforms": platforms,
+            "genre": genre,
+            "released": release_year,
+            "metacritic": metacritic,
+            "tags": tags_preview,
+            "slug": short_desc
+        })
 
     return results
+
 
