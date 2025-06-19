@@ -82,7 +82,3 @@ streamlit run app.py
 - Game metadata is stored in `data/games.csv`
 - Sentence embeddings are cached in `data/embeddings.pkl`
 - User preferences (likes/dislikes) are stored in `data/user_memory.pkl`
-
-## License
-
-This project is for personal and educational use.
