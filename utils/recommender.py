@@ -13,12 +13,23 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 # Embedding cache file
 EMBEDDINGS_FILE = "data/embeddings.pkl"
 
-# Load or compute game embeddings
+# Load or recompute embeddings based on dataset length
+regenerate = True
+
+
+# Globals
+DATA_FILE = "data/games.csv"
+games_df = pd.read_csv(DATA_FILE)
+
 if os.path.exists(EMBEDDINGS_FILE):
     with open(EMBEDDINGS_FILE, "rb") as f:
-        game_embeddings = pickle.load(f)
-else:
-    print("Generating game embeddings for the first time...")
+        cached_embeddings = pickle.load(f)
+    if len(cached_embeddings) == len(games_df):
+        game_embeddings = cached_embeddings
+        regenerate = False
+
+if regenerate:
+    print("Generating fresh game embeddings...")
     game_texts = (games_df["title"] + " " + games_df["tags"] + " " + games_df["description"]).fillna("").tolist()
     game_embeddings = model.encode(game_texts, convert_to_tensor=True).cpu()
     with open(EMBEDDINGS_FILE, "wb") as f:
@@ -26,11 +37,16 @@ else:
     print(f"Saved embeddings to {EMBEDDINGS_FILE}")
 
 
+
 # Match user input to games
 def get_semantic_matches(user_input, genre_filter=None, platform_filter=None, liked_titles=None, custom_df=None):
     df = custom_df.copy() if custom_df is not None else games_df.copy()
     user_embedding = model.encode([user_input], convert_to_tensor=True).cpu()
     scores = cosine_similarity(user_embedding, game_embeddings.cpu())[0]
+
+    # Ensure score and df length match
+    if len(df) != len(scores):
+        raise ValueError(f"Mismatch between DataFrame rows ({len(df)}) and embedding scores ({len(scores)}).")
 
     df["score"] = scores
 
@@ -50,6 +66,9 @@ def get_semantic_matches(user_input, genre_filter=None, platform_filter=None, li
             liked_embeddings = model.encode(liked_texts, convert_to_tensor=True).cpu()
             sim_boosts = cosine_similarity(liked_embeddings, game_embeddings.cpu())
             similarity_scores = sim_boosts.mean(axis=0)
+
+            if len(similarity_scores) != len(df):
+                similarity_scores = similarity_scores[:len(df)]
             df["score"] += similarity_scores * 0.2
 
     top_matches = df.sort_values(by="score", ascending=False).drop_duplicates(subset="title").head(10)
@@ -61,7 +80,10 @@ def get_semantic_matches(user_input, genre_filter=None, platform_filter=None, li
         genre = match["genre"]
         description = match["description"]
         released = match["released"] or "Unknown"
-        release_year = released.split("-")[0] if released != "Unknown" else "Unknown"
+        if isinstance(released, str) and released.strip():
+            release_year = released.split("-")[0]
+        else:
+            release_year = "Unknown"
         metacritic = match["metacritic"] if pd.notna(match["metacritic"]) else "N/A"
 
         tag_list = [t.strip() for t in match["tags"].split(",") if len(t.strip()) < 25 and " " in t]
@@ -80,5 +102,15 @@ def get_semantic_matches(user_input, genre_filter=None, platform_filter=None, li
         })
 
     return results
+
+
+def refresh_embeddings():
+    global games_df, game_embeddings
+    games_df = pd.read_csv(DATA_FILE)
+    texts = (games_df["title"] + " " + games_df["tags"] + " " + games_df["description"]).fillna("").tolist()
+    game_embeddings = model.encode(texts, convert_to_tensor=True).cpu()
+    with open(EMBEDDINGS_FILE, "wb") as f:
+        pickle.dump(game_embeddings, f)
+    print(f"[DEBUG] Recomputed embeddings for {len(games_df)} games.")
 
 

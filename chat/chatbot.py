@@ -1,8 +1,9 @@
 from rapidfuzz import fuzz
+from sentence_transformers import SentenceTransformer
 from utils.filters import GENRE_KEYWORDS, PLATFORM_KEYWORDS
-from utils.recommender import get_semantic_matches, games_df
+from utils.recommender import get_semantic_matches, game_embeddings, games_df
 
-# from utils.user_memory import memory
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
 last_shown_titles = []
 seen_titles = set()
@@ -56,7 +57,7 @@ def parse_feedback(user_input, memory):
 
 
 def get_response(user_input, memory):
-    global last_shown_titles, last_matches, pagination_index
+    global last_shown_titles, last_matches, pagination_index, games_df, game_embeddings, model
 
     feedback = parse_feedback(user_input, memory)
     if feedback:
@@ -78,7 +79,6 @@ def get_response(user_input, memory):
 
     # New search
     pagination_index = PAGE_SIZE
-
     genre_filter, platform_filter = extract_filters(user_input)
     liked_titles = memory.get_likes() if memory else []
 
@@ -87,11 +87,44 @@ def get_response(user_input, memory):
     if "not violent" in user_input.lower():
         filtered_df = filtered_df[~filtered_df["tags"].str.contains("violent", case=False, na=False)]
 
+    print(f"[DEBUG] DataFrame: {len(filtered_df)} rows | Embeddings: {len(game_embeddings)}")
+
     matches = get_semantic_matches(user_input, genre_filter, platform_filter, liked_titles, custom_df=filtered_df)
+    MIN_RESULTS_THRESHOLD = 500
+
+    # Fallback if no matches found locally
+    if len(matches) < MIN_RESULTS_THRESHOLD:
+        print("[DEBUG] Low match count — fetching from RAWG...")
+        from utils.fetch_games import fetch_games_from_rawg, append_new_games_to_csv
+
+        new_games = fetch_games_from_rawg(user_input)
+        new_data_added = append_new_games_to_csv(new_games)
+
+        if new_data_added:
+            from utils.recommender import refresh_embeddings
+            refresh_embeddings()
+
+            # Sync updated globals from recommender.py
+            from utils.recommender import games_df as updated_df, game_embeddings as updated_embeddings
+            games_df = updated_df
+            game_embeddings = updated_embeddings
+            filtered_df = games_df.copy()
+
+        else:
+            print("[DEBUG] No new games added — skipping embedding refresh.")
+
+        print(f"[DEBUG] DataFrame: {len(filtered_df)} rows | Embeddings: {len(game_embeddings)}")
+
+        matches = get_semantic_matches(user_input, genre_filter, platform_filter, liked_titles, custom_df=filtered_df)
+
+        if not matches:
+            return "I couldn’t find anything even after searching online — maybe try rephrasing?"
+
+    # Proceed with matched results
     last_matches = matches
     last_shown_titles = [match["title"] for match in matches[:PAGE_SIZE]]
-
     return format_results(matches[:PAGE_SIZE], memory)
+
 
 
 def extract_filters(user_input):
@@ -119,7 +152,7 @@ def format_results(matches, memory=None):
     response = ""
     for match in matches:
         response += (
-            f"\n*{match['title']}* — _{match['genre'].title()}_"
+            f"\n*{match['title']}* — _{str(match['genre']).title()}_"
             f"\nReleased: {match['released']} | Metacritic: {match['metacritic']}"
             f"\nPlatforms: {match['platforms']}"
             f"\nTags: {', '.join(tag.strip().title() for tag in match['tags'].split(',') if tag.strip())}"
@@ -130,4 +163,5 @@ def format_results(matches, memory=None):
         response += "\n\nYou liked: " + ", ".join(memory.get_likes())
 
     return response.strip()
+
 
