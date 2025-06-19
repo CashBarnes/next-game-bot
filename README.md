@@ -16,7 +16,7 @@ NextGameBot is a lightweight local game recommendation chatbot that helps users 
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/NextGameBot.git
+git clone https://github.com/CashBarnes/next-game-bot.git
 cd NextGameBot
 ```
 
