@@ -86,7 +86,8 @@ def get_semantic_matches(user_input, genre_filter=None, platform_filter=None, li
             release_year = "Unknown"
         metacritic = match["metacritic"] if pd.notna(match["metacritic"]) else "N/A"
 
-        tag_list = [t.strip() for t in match["tags"].split(",") if len(t.strip()) < 25 and " " in t]
+        tags_raw = match["tags"] if isinstance(match["tags"], str) else ""
+        tag_list = [t.strip() for t in tags_raw.split(",") if len(t.strip()) < 25 and " " in t]
         tags_preview = ", ".join(tag_list[:3])
 
         short_desc = description[:240].strip().replace('\n', ' ') + "..."

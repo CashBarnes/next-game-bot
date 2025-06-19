@@ -1,6 +1,6 @@
 import streamlit as st
 from chat.chatbot import get_response
-from utils.user_memory import UserMemory
+from utils.memory import UserMemory
 
 st.set_page_config(page_title="NextGameBot", layout="centered")
 st.title("NextGameBot")
@@ -14,7 +14,7 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 # Input handling
-user_input = st.chat_input("What are you in the mood to play?")
+user_input = st.chat_input("What are you in the mood to play? (Type 'likes', 'dislikes', or 'reset' for memory options)")
 if user_input:
     user_input_lower = user_input.strip().lower()
 
