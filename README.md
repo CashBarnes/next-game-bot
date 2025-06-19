@@ -75,7 +75,6 @@ streamlit run app.py
 
 - `RAWG_API_KEY`: your API key
 
-4. Make sure `requirements.txt` and `app.py` are in the root of the repo
 
 ## Data
 
